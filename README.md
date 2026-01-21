@@ -99,9 +99,9 @@ const auth = () => {
             method: 'get', 
             url: cf.apiEndpoint + '/auth/uaa/get-token',
             headers: {
-                'akm-provider': req.body.provider,
-                'akm-authorization': req.body.encryptData,  // ✅ Encrypted data
-                'akm-mfa': req.body.mfa,
+                'open4talk-provider': req.body.provider,
+                'open4talk-authorization': req.body.encryptData,  // ✅ Encrypted data
+                'open4talk-mfa': req.body.mfa,
                 // ... other headers
             },
         })
@@ -155,8 +155,8 @@ app.post('/login-ldap', function(req, res, next) {
             method: 'get', 
             url: cf.apiEndpoint + '/auth/uaa/get-token',
             headers: {
-                'akm-provider': req.body.provider,
-                'akm-authorization': req.body.encryptData,
+                'open4talk-provider': req.body.provider,
+                'open4talk-authorization': req.body.encryptData,
             },
         })
         .then(function(resAuth) {
