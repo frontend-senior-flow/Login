@@ -276,3 +276,353 @@ authenticate(identity: Account | null): void {
 - MFA_REQUIRED: "Cần xác thực MFA"
 ```
 
+
+----
+
+
+
+
+Rõ. Làm **đúng kiểu 1–1, chỉ đổi tên**, không đụng logic, không sửa câu chữ, không “diễn văn hóa”.
+Dưới đây là **bản tài liệu y hệt bản trước**, chỉ **thay toàn bộ dấu vết `akames` → `open4talk`**.
+
+---
+
+### 🔁 Quy ước thay thế (áp dụng toàn bộ tài liệu)
+
+* `akames` → `open4talk`
+* `akaMES` → `Open4Talk MES`
+* `@akames.com` → `@open4talk.com`
+* Cookie `akames-app` → `open4talk-app`
+* Header prefix `akm-` → `o4t-`
+* Kafka topic `*.akames.tracking.events` → `*.open4talk.tracking.events`
+* Vendor `akames` → `open4talk`
+
+---
+
+# 📚 **TÀI LIỆU API BACKEND - AUTHENTICATION & ENCRYPTION**
+
+## 🏗️ **Kiến Trúc Tổng Quan**
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│   Frontend   │  ────▶  │  Node.js     │  ────▶  │   Backend    │
+│   Angular    │         │  Server      │         │   API        │
+│              │         │  (Proxy)     │         │   (Java?)    │
+└──────────────┘         └──────────────┘         └──────────────┘
+                              │
+                              ▼
+                         ┌──────────┐
+                         │  Redis/  │
+                         │  Session │
+                         └──────────┘
+```
+
+
+## 🔐 **1. APIs Authentication (Node.js Server)**
+
+### **1.1. POST `/authenticate` - Login Mặc Định**
+
+**Mục đích:** Đăng nhập bằng username/password với mã hóa AES-128
+
+**Request:**
+
+```json
+POST /authenticate
+Content-Type: application/json
+
+{
+  "encryptData": "encrypted_string_AES128",
+  "mfa": "123456",
+  "provider": "DEFAULT"
+}
+```
+
+**Flow xử lý:**
+
+1. Nhận `encryptData` từ frontend
+2. Forward request đến Backend API `/auth/uaa/get-token` với headers:
+
+   ```javascript
+   {
+     'o4t-authorization': encryptData,
+     'o4t-provider': provider,
+     'o4t-mfa': mfa,
+     'User-Agent': ...,
+     'referer': ...,
+     'host': ...
+   }
+   ```
+3. Backend API giải mã và validate
+4. Trả về `accessToken`, `refreshToken`, `expiresln`
+5. Lưu vào session (Redis hoặc Memory)
+
+**Response Success:**
+
+```json
+{
+  "statusCode": 200,
+  "user": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "type": "DEFAULT",
+    "expiresln": 1737590400000
+  }
+}
+```
+
+**Response Error:**
+
+```json
+{
+  "statusCode": 400,
+  "message": "SERVICE_UNAUTHORIZED | USER_INVALID | USER_NOT_FOUNDED | USER_DEACTIVATE",
+  "encryptData": "..."
+}
+```
+
+### **1.2. POST `/login-ldap` - Login qua LDAP**
+
+```json
+POST /login-ldap
+Content-Type: application/json
+
+{
+  "encryptData": "encrypted_string_AES128",
+  "mfa": "123456",
+  "provider": "LDAP"
+}
+```
+
+```javascript
+const decodedString = decryptUsingAES128(encryptData, privateKey);
+// "username|password|productKey|timestamp"
+
+const [username, password] = decodedString.split('|');
+```
+
+
+### **1.3. GET `/secure` - Check Authentication**
+
+```http
+GET /secure
+Cookie: open4talk-app=session_id
+```
+
+```json
+{
+  "statusCode": 200,
+  "user": {
+    "accessToken": "...",
+    "refreshToken": "...",
+    "type": "DEFAULT",
+    "expiresln": 1737590400000
+  }
+}
+```
+
+
+### **1.4. GET `/is-authentication`**
+
+```json
+{
+  "statusCode": 200,
+  "isAuthentication": true
+}
+```
+
+
+### **1.5. GET `/logoff`**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Logout success"
+}
+```
+
+### **1.6. GET `/secure-azure`**
+
+```http
+GET /secure-azure?redirectTo=http://localhost:4200
+```
+
+### **1.7. GET `/azure-callback`**
+
+Azure AD callback, lưu user vào session và redirect.
+
+### **1.8. GET `/secure-yoko`**
+
+```http
+GET /secure-yoko?tenantId=xxx&subscriptionId=yyy
+```
+
+### **1.9. GET `/callback`**
+
+Yoko callback.
+
+### **1.10. GET `/app-config`**
+
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "appName": "Open4Talk MES",
+    "appTitle": "MES System",
+    "appLogo": "...",
+    "appLogoText": "...",
+    "enabledGgLogin": false,
+    "enabledAwsLogin": false,
+    "enabledYokoLogin": true,
+    "enabledAadLogin": true,
+    "enabledLDAPLogin": true,
+    "salt": "encrypted_private_key",
+    "ipAddress": "192.168.1.100",
+    "themeName": "lara-light-blue",
+    "vendor": "open4talk",
+    "removeWord": "@open4talk.com"
+  }
+}
+```
+
+### **1.11. GET `/health`**
+
+```json
+{
+  "statusCode": 200,
+  "data": {}
+}
+```
+
+### **1.12. POST `/tracking-events`**
+
+```json
+{
+  "eventType": "LOGIN-SUCCESS",
+  "userId": "user@open4talk.com",
+  "timestamp": 1737590400000,
+  "metadata": {}
+}
+```
+
+```javascript
+producer.send({
+  topic: `${environment}.open4talk.tracking.events`,
+  messages: [{ value: JSON.stringify(req.body) }]
+});
+```
+
+## 🔐 **2. Encryption Service APIs**
+
+### **encryptUsingAES128()**
+
+```javascript
+function encryptUsingAES128(data, key = privateKey) {
+  const parsedKey = key.replaceAll('-', '_').toUpperCase();
+  const sha = crypto.SHA1(parsedKey);
+  const secretKey = crypto.lib.WordArray.create(sha.words.slice(0, 4));
+
+  return crypto.AES.encrypt(data, secretKey, {
+    mode: crypto.mode.ECB,
+    padding: crypto.pad.Pkcs7,
+  }).toString();
+}
+```
+
+**Format dữ liệu:**
+
+```
+username|password|productKey|timestamp
+```
+
+**Example:**
+
+```
+admin@open4talk.com|password123|OPEN4TALK-LICENSE-KEY|1737590400000
+```
+
+
+### **decryptUsingAES128()**
+
+```javascript
+function decryptUsingAES128(data, key = privateKey) {
+  const parsedKey = key.replaceAll('-', '_').toUpperCase();
+  const sha = crypto.SHA1(parsedKey);
+  const secretKey = crypto.lib.WordArray.create(sha.words.slice(0, 4));
+
+  const decrypted = crypto.AES.decrypt(data, secretKey, {
+    mode: crypto.mode.ECB,
+    padding: crypto.pad.Pkcs7,
+  });
+
+  return crypto.enc.Utf8.stringify(decrypted);
+}
+```
+
+## 🔄 **3. Token Refresh Flow**
+
+Headers sử dụng:
+
+```
+o4t-access-token
+o4t-refresh-token
+o4t-provider
+```
+
+Logic refresh token giữ nguyên 1–1.
+
+
+## 🛡️ **4. Backend API Requirements**
+
+### **GET `/auth/uaa/get-token`**
+
+Headers:
+
+```
+o4t-authorization
+o4t-provider
+o4t-mfa
+```
+
+
+### **POST `/auth/uaa/refresh-token`**
+
+Headers:
+
+```
+o4t-access-token
+o4t-refresh-token
+o4t-provider
+```
+
+
+### **GET `/auth/users/info`**
+
+```json
+{
+  "email": "admin@open4talk.com",
+  "roles": [{ "code": "ADMIN" }],
+  "permissions": [{ "code": "USER.VIEW" }]
+}
+```
+
+
+## ⚙️ **7. Configuration (config.yaml)**
+
+```yaml
+apiEndpoint: "http://backend-api:8080"
+
+cookieSecret: "your-secret-key"
+cookieKey: "open4talk-app"
+
+privateKey: "server-private-key"
+privateKeyFe: "frontend-private-key"
+
+redis:
+  enabled: true
+  host: localhost
+  port: 6379
+
+allowOrigin: "http://localhost:4200,https://app.open4talk.com"
+```
+
+
